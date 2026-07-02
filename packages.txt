@@ -1,2 +1,0 @@
-# For TA-Lib C++ library (optional - app works without it)
-# ta-lib
