@@ -1,6 +1,6 @@
 # 📈 Stock Forecast & Technical Analysis App
 
-A comprehensive Streamlit application for stock analysis with 15+ technical indicators and 4 forecasting models.
+A lightweight Streamlit app for stock analysis with 15+ technical indicators and forecasting models.
 
 ## 🚀 Deploy to Streamlit Cloud
 
@@ -21,29 +21,33 @@ streamlit run app.py
 
 ### Technical Indicators
 - Candlestick Chart with Volume
-- Bollinger Bands
-- SMA (20, 50)
-- EMA (12, 26)
-- RSI
-- MACD
-- Stochastic Oscillator
-- ADX
-- MFI (Money Flow Index)
-- VWAP
-- Ichimoku Cloud
-- Parabolic SAR
-- Fibonacci Retracement
+- Bollinger Bands | SMA (20, 50) | EMA (12, 26)
+- RSI | MACD | Stochastic | ADX | MFI | VWAP
+- Ichimoku Cloud | Parabolic SAR | Fibonacci Retracement
 
 ### Forecasting Models
-- Prophet (Facebook)
-- ARIMA
-- Moving Average + Trend
-- Monte Carlo Simulation
+- **Always Available:** Moving Average + Trend, Monte Carlo Simulation
+- **Optional (install separately):** Prophet, ARIMA
 
 ## 📝 Usage
 
-1. Enter a stock symbol (e.g., AAPL, TSLA, MSFT)
+1. Enter a stock symbol (e.g., AAPL, TSLA, MSFT, BTC-USD)
 2. Select time period and interval
 3. Toggle indicators on/off
 4. Choose forecast model and days
 5. Click **Analyze Stock**
+
+## 🔧 Optional: Enable Advanced Forecasting
+
+To add Prophet and ARIMA models, update `requirements.txt`:
+```
+streamlit>=1.28.0
+yfinance>=0.2.28
+pandas>=2.0.0
+numpy>=1.24.0
+plotly>=5.18.0
+prophet>=1.1.5
+statsmodels>=0.14.0
+```
+
+> ⚠️ Note: Prophet requires system build tools and may fail on Streamlit Cloud free tier due to memory limits.
