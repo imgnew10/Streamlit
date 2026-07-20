@@ -29,6 +29,7 @@ if provider_choice == "OpenRouter":
     api_key = st.sidebar.text_input(
         "OpenRouter API Key",
         type="password",
+        value="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",
         placeholder="sk-or-v1-...",
         help="Get your key at openrouter.ai/keys"
     )
@@ -62,7 +63,12 @@ else:
     api_key = ""
     model_options = ["llama3.1:8b", "mistral", "qwen2.5:7b", "phi3:mini"]
 
-model_choice = st.sidebar.selectbox("LLM Model", model_options, index=0)
+if provider_choice == "OpenRouter":
+    default_model_index = 1
+else:
+    default_model_index = 0
+
+model_choice = st.sidebar.selectbox("LLM Model", model_options, index=default_model_index)
 
 if provider_choice == "Ollama (Local)":
     ollama_url = st.sidebar.text_input(
