@@ -1,10 +1,8 @@
 import streamlit as st
 import requests
-import json
 import yfinance as yf
 import pandas as pd
 import numpy as np
-from datetime import datetime, timedelta
 import time
 import random
 import warnings
@@ -15,9 +13,9 @@ from recommendation_engine import fetch_stock_data, calculate_all_signals
 st.set_page_config(page_title="AI Trading Agents", page_icon="🤖", layout="wide")
 
 st.markdown("<h1 style='text-align:center;color:#6C5CE7;font-size:2.2rem;'>🤖 AI Trading Agents</h1>", unsafe_allow_html=True)
-st.markdown("<p style='text-align:center;color:#666;font-size:1rem;'>Multi-Agent LLM Debate: Fundamentals + Sentiment + News + Technical + Risk + Portfolio Manager</p>", unsafe_allow_html=True)
+st.markdown("<p style='text-align:center;color:#666;font-size:1rem;'>Multi-Agent LLM Debate using OpenRouter API</p>", unsafe_allow_html=True)
 
-# ==================== SIDEBAR: API KEY + SETTINGS ====================
+# SIDEBAR
 st.sidebar.markdown("## 🔐 OpenRouter API")
 st.sidebar.markdown("---")
 
@@ -25,7 +23,7 @@ api_key = st.sidebar.text_input(
     "OpenRouter API Key",
     type="password",
     placeholder="sk-or-v1-...",
-    help="Get your key at https://openrouter.ai/keys"
+    help="Get your key at openrouter.ai/keys"
 )
 
 model_choice = st.sidebar.selectbox(
@@ -42,18 +40,15 @@ model_choice = st.sidebar.selectbox(
 )
 
 st.sidebar.markdown("---")
-st.sidebar.markdown("## ⚙️ Analysis Settings")
+st.sidebar.markdown("## ⚙️ Settings")
 
 stock_symbol = st.sidebar.text_input("Stock Symbol", value="AAPL", placeholder="e.g. AAPL, TSLA, NVDA").upper().strip()
-include_social = st.sidebar.checkbox("Include Social Sentiment Analysis", value=True)
-include_news = st.sidebar.checkbox("Include News Analysis", value=True)
 
 st.sidebar.markdown("---")
 st.sidebar.markdown("<small>Powered by OpenRouter API</small>", unsafe_allow_html=True)
 
-# ==================== HELPER FUNCTIONS ====================
+# HELPER FUNCTIONS
 def call_openrouter(system_prompt, user_prompt, api_key, model):
-    """Call OpenRouter API with retry logic."""
     if not api_key or not api_key.startswith("sk-or"):
         return None, "Invalid API key. Please enter a valid OpenRouter key starting with 'sk-or-v1-'."
 
@@ -76,7 +71,7 @@ def call_openrouter(system_prompt, user_prompt, api_key, model):
 
     for attempt in range(3):
         try:
-            time.sleep(1.5 + random.uniform(0.5, 1.5))  # Rate limiting
+            time.sleep(1.5 + random.uniform(0.5, 1.5))
             response = requests.post(
                 "https://openrouter.ai/api/v1/chat/completions",
                 headers=headers,
@@ -106,10 +101,8 @@ def call_openrouter(system_prompt, user_prompt, api_key, model):
     return None, "Max retries exceeded. Please try again later."
 
 def parse_agent_response(content):
-    """Extract signal and reasoning from agent response."""
     content_lower = content.lower()
 
-    # Determine signal
     if any(word in content_lower for word in ["strong buy", "strong_buy", "strongbuy"]):
         signal = "STRONG BUY"
         score = 1.0
@@ -133,38 +126,34 @@ def parse_agent_response(content):
 
     return {"signal": signal, "score": score, "emoji": emoji, "reasoning": content}
 
-# ==================== MAIN ====================
+# MAIN
 if not api_key:
-    st.info("👈 Enter your **OpenRouter API Key** in the sidebar to start the AI Trading Agents analysis.")
-    st.markdown("""
-    ### How to get an API Key:
-    1. Go to [openrouter.ai/keys](https://openrouter.ai/keys)
-    2. Sign up / Log in
-    3. Click **"Create Key"**
-    4. Copy the key (starts with `sk-or-v1-`)
-    5. Paste it in the sidebar
-
-    ### What the Agents Do:
-    | Agent | Role |
-    |-------|------|
-    | 📊 **Fundamentals Analyst** | Company financials & valuation |
-    | 😊 **Sentiment Analyst** | Social media & market mood |
-    | 📰 **News Analyst** | Global news & macro trends |
-    | 📈 **Technical Analyst** | Indicators & price patterns |
-    | ⚠️ **Risk Manager** | Risk assessment & position sizing |
-    | 💼 **Portfolio Manager** | Final decision & execution |
-    """)
+    st.info("Enter your OpenRouter API Key in the sidebar to start.")
+    st.markdown("**How to get an API Key:**")
+    st.markdown("1. Go to [openrouter.ai/keys](https://openrouter.ai/keys)")
+    st.markdown("2. Sign up / Log in")
+    st.markdown("3. Click **Create Key**")
+    st.markdown("4. Copy the key (starts with `sk-or-v1-`)")
+    st.markdown("5. Paste it in the sidebar")
+    st.markdown("---")
+    st.markdown("**What the Agents Do:**")
+    st.markdown("- 📊 **Fundamentals Analyst** - Company financials & valuation")
+    st.markdown("- 😊 **Sentiment Analyst** - Social media & market mood")
+    st.markdown("- 📰 **News Analyst** - Global news & macro trends")
+    st.markdown("- 📈 **Technical Analyst** - Indicators & price patterns")
+    st.markdown("- ⚠️ **Risk Manager** - Risk assessment & position sizing")
+    st.markdown("- 💼 **Portfolio Manager** - Final decision & execution")
     st.stop()
 
 if not stock_symbol:
-    st.info("👈 Enter a stock symbol in the sidebar.")
+    st.info("Enter a stock symbol in the sidebar.")
     st.stop()
 
 # Fetch stock data
 with st.spinner(f"Fetching data for {stock_symbol}..."):
     data, info, ticker = fetch_stock_data(stock_symbol, period="6mo")
     if data is None or data.empty:
-        st.error(f"❌ No data found for '{stock_symbol}'.")
+        st.error(f"No data found for '{stock_symbol}'.")
         st.stop()
 
 # Calculate technical signals for context
@@ -181,67 +170,54 @@ pe_ratio = info.get('trailingPE', 'N/A') if info else 'N/A'
 eps = info.get('trailingEps', 'N/A') if info else 'N/A'
 
 # Technical summary
-tech_summary = f"""
-Current Price: ${last_price:.2f}
-52W High: ${data['High'].max():.2f} | 52W Low: ${data['Low'].min():.2f}
-RSI: {results['smart_score'].get('RSI', 'N/A')}
-MACD: {results['smart_score'].get('MACD', 'N/A')}
-SMA: {results['smart_score'].get('SMA Cross', 'N/A')}
-Bollinger: {results['smart_score'].get('Bollinger', 'N/A')}
-Stochastic: {results['smart_score'].get('Stochastic', 'N/A')}
-VWAP: {results['smart_score'].get('VWAP', 'N/A')}
-Volume: {results['smart_score'].get('Volume', 'N/A')}
-Trend: {results['trend_meter'].get('ADX', 'N/A')}
-Patterns: {', '.join([f'{k} ({v})' for k, v in results['patterns'].items()]) if results['patterns'] else 'None detected'}
-"""
+tech_summary = f"Current Price: ${last_price:.2f}\n"
+tech_summary += f"52W High: ${data['High'].max():.2f} | 52W Low: ${data['Low'].min():.2f}\n"
+tech_summary += f"RSI: {results['smart_score'].get('RSI', 'N/A')}\n"
+tech_summary += f"MACD: {results['smart_score'].get('MACD', 'N/A')}\n"
+tech_summary += f"SMA: {results['smart_score'].get('SMA Cross', 'N/A')}\n"
+tech_summary += f"Bollinger: {results['smart_score'].get('Bollinger', 'N/A')}\n"
+tech_summary += f"Stochastic: {results['smart_score'].get('Stochastic', 'N/A')}\n"
+tech_summary += f"VWAP: {results['smart_score'].get('VWAP', 'N/A')}\n"
+tech_summary += f"Volume: {results['smart_score'].get('Volume', 'N/A')}\n"
+tech_summary += f"Trend: {results['trend_meter'].get('ADX', 'N/A')}\n"
+patterns_str = ', '.join([f"{k} ({v})" for k, v in results['patterns'].items()]) if results['patterns'] else 'None detected'
+tech_summary += f"Patterns: {patterns_str}"
 
-# ==================== RUN AGENTS ====================
+# RUN AGENTS
 st.markdown("---")
-st.subheader(f"🎯 Analyzing {company_name} ({stock_symbol})")
+st.subheader(f"Analyzing {company_name} ({stock_symbol})")
 
 agents_config = [
     {
-        "name": "📊 Fundamentals Analyst",
+        "name": "Fundamentals Analyst",
         "icon": "📊",
         "color": "#3498db",
         "system": "You are a fundamentals analyst. Analyze company financials, valuation metrics, earnings, and growth prospects. Be concise (3-4 sentences). End with a clear signal: STRONG BUY / BUY / HOLD / SELL / STRONG SELL.",
-        "prompt": f"Analyze {company_name} ({stock_symbol}) fundamentals.
-
-Company Info:
-- Sector: {sector}
-- Market Cap: {market_cap}
-- P/E Ratio: {pe_ratio}
-- EPS: {eps}
-
-Provide your assessment and signal."
+        "prompt": f"Analyze {company_name} ({stock_symbol}) fundamentals.\n\nCompany Info:\n- Sector: {sector}\n- Market Cap: {market_cap}\n- P/E Ratio: {pe_ratio}\n- EPS: {eps}\n\nProvide your assessment and signal."
     },
     {
-        "name": "📈 Technical Analyst", 
+        "name": "Technical Analyst", 
         "icon": "📈",
         "color": "#9b59b6",
         "system": "You are a technical analyst. Analyze price action, indicators, and patterns. Be concise (3-4 sentences). End with a clear signal: STRONG BUY / BUY / HOLD / SELL / STRONG SELL.",
-        "prompt": f"Analyze {company_name} ({stock_symbol}) technicals.
-
-{tech_summary}
-
-Provide your assessment and signal."
+        "prompt": f"Analyze {company_name} ({stock_symbol}) technicals.\n\n{tech_summary}\n\nProvide your assessment and signal."
     },
     {
-        "name": "😊 Sentiment Analyst",
+        "name": "Sentiment Analyst",
         "icon": "😊",
         "color": "#e67e22",
         "system": "You are a sentiment analyst. Analyze market mood, social media trends, and investor psychology. Be concise (3-4 sentences). End with a clear signal: STRONG BUY / BUY / HOLD / SELL / STRONG SELL.",
         "prompt": f"Analyze market sentiment for {company_name} ({stock_symbol}). Current price ${last_price:.2f}, sector {sector}. Consider recent price action and general market mood. Provide your assessment and signal."
     },
     {
-        "name": "📰 News Analyst",
+        "name": "News Analyst",
         "icon": "📰",
         "color": "#1abc9c",
         "system": "You are a news analyst. Consider recent global events, sector trends, and macroeconomic factors. Be concise (3-4 sentences). End with a clear signal: STRONG BUY / BUY / HOLD / SELL / STRONG SELL.",
         "prompt": f"Analyze news and macro factors affecting {company_name} ({stock_symbol}) in the {sector} sector. Current price ${last_price:.2f}. Provide your assessment and signal."
     },
     {
-        "name": "⚠️ Risk Manager",
+        "name": "Risk Manager",
         "icon": "⚠️",
         "color": "#e74c3c",
         "system": "You are a risk manager. Assess downside risk, volatility, and position sizing. Be concise (3-4 sentences). End with a clear signal: STRONG BUY / BUY / HOLD / SELL / STRONG SELL.",
@@ -266,22 +242,20 @@ for idx, agent in enumerate(agents_config):
             )
 
         if error:
-            st.error(f"❌ {error}")
+            st.error(f"Error: {error}")
             agent_results[agent['name']] = {"signal": "ERROR", "score": 0, "emoji": "⚪", "reasoning": error}
         else:
             parsed = parse_agent_response(content)
             agent_results[agent['name']] = parsed
 
-            st.markdown(f"""
-            <div style="background-color:{agent['color']}15;border-radius:8px;padding:10px;margin:5px 0;border-left:3px solid {agent['color']};">
-                <p style="margin:0;font-size:1.2rem;font-weight:bold;color:{agent['color']};">{parsed['emoji']} {parsed['signal']}</p>
-                <p style="margin:5px 0 0 0;font-size:0.85rem;color:#444;line-height:1.4;">{parsed['reasoning'][:200]}...</p>
-            </div>
-            """, unsafe_allow_html=True)
+            st.markdown(f"<div style='background-color:{agent['color']}15;border-radius:8px;padding:10px;margin:5px 0;border-left:3px solid {agent['color']};'>"
+                       f"<p style='margin:0;font-size:1.2rem;font-weight:bold;color:{agent['color']};'>{parsed['emoji']} {parsed['signal']}</p>"
+                       f"<p style='margin:5px 0 0 0;font-size:0.85rem;color:#444;line-height:1.4;'>{parsed['reasoning'][:200]}...</p>"
+                       f"</div>", unsafe_allow_html=True)
 
-# ==================== PORTFOLIO MANAGER - FINAL DECISION ====================
+# PORTFOLIO MANAGER - FINAL DECISION
 st.markdown("---")
-st.subheader("💼 Portfolio Manager - Final Decision")
+st.subheader("Portfolio Manager - Final Decision")
 
 # Aggregate agent scores
 valid_scores = [r['score'] for r in agent_results.values() if r['signal'] != "ERROR"]
@@ -289,39 +263,28 @@ if valid_scores:
     avg_score = np.mean(valid_scores)
 
     # Build consensus prompt
-    consensus_summary = "
-".join([
+    consensus_summary = "\n".join([
         f"{name}: {r['emoji']} {r['signal']} (Score: {r['score']:+.1f})"
         for name, r in agent_results.items() if r['signal'] != "ERROR"
     ])
 
     pm_system = "You are a portfolio manager. Review all analyst inputs and make a final trading decision with position sizing. Be decisive and concise (4-5 sentences)."
-    pm_prompt = f"""Review the following analyst consensus for {company_name} ({stock_symbol}):
-
-{consensus_summary}
-
-Average Score: {avg_score:+.2f}/1.00
-
-Make a final decision: STRONG BUY / BUY / HOLD / SELL / STRONG SELL.
-Include recommended position size (e.g., 5% portfolio allocation) and stop-loss level."""
+    pm_prompt = f"Review the following analyst consensus for {company_name} ({stock_symbol}):\n\n{consensus_summary}\n\nAverage Score: {avg_score:+.2f}/1.00\n\nMake a final decision: STRONG BUY / BUY / HOLD / SELL / STRONG SELL. Include recommended position size (e.g., 5% portfolio allocation) and stop-loss level."
 
     with st.spinner("Portfolio Manager deliberating..."):
         pm_content, pm_error = call_openrouter(pm_system, pm_prompt, api_key, model_choice)
 
     if pm_error:
-        st.error(f"❌ {pm_error}")
+        st.error(f"Error: {pm_error}")
     else:
         pm_parsed = parse_agent_response(pm_content)
 
-        # Color based on final signal
         final_color = "#2ca02c" if "BUY" in pm_parsed['signal'] else "#DC143C" if "SELL" in pm_parsed['signal'] else "#FFA500"
 
-        st.markdown(f"""
-        <div style="background:linear-gradient(135deg, {final_color}15 0%, {final_color}08 100%);border-radius:16px;padding:25px;margin:15px 0;border:2px solid {final_color};text-align:center;">
-            <h2 style="margin:0 0 10px 0;color:{final_color};font-size:2rem;">{pm_parsed['emoji']} {pm_parsed['signal']}</h2>
-            <p style="margin:0;color:#333;font-size:1rem;line-height:1.6;max-width:800px;margin:0 auto;">{pm_parsed['reasoning']}</p>
-        </div>
-        """, unsafe_allow_html=True)
+        st.markdown(f"<div style='background:linear-gradient(135deg, {final_color}15 0%, {final_color}08 100%);border-radius:16px;padding:25px;margin:15px 0;border:2px solid {final_color};text-align:center;'>"
+                   f"<h2 style='margin:0 0 10px 0;color:{final_color};font-size:2rem;'>{pm_parsed['emoji']} {pm_parsed['signal']}</h2>"
+                   f"<p style='margin:0;color:#333;font-size:1rem;line-height:1.6;max-width:800px;margin:0 auto;'>{pm_parsed['reasoning']}</p>"
+                   f"</div>", unsafe_allow_html=True)
 
         # Agent consensus chart
         import plotly.graph_objects as go
