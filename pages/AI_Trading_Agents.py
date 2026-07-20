@@ -16,29 +16,62 @@ st.markdown("<h1 style='text-align:center;color:#6C5CE7;font-size:2.2rem;'>🤖 
 st.markdown("<p style='text-align:center;color:#666;font-size:1rem;'>Multi-Agent LLM Debate using OpenRouter API</p>", unsafe_allow_html=True)
 
 # SIDEBAR
-st.sidebar.markdown("## 🔐 OpenRouter API")
+st.sidebar.markdown("## 🔐 AI Provider")
 st.sidebar.markdown("---")
 
-api_key = st.sidebar.text_input(
-    "OpenRouter API Key",
-    type="password",
-    placeholder="sk-or-v1-...",
-    help="Get your key at openrouter.ai/keys"
+provider_choice = st.sidebar.selectbox(
+    "Provider",
+    ["OpenRouter", "OpenAI", "Anthropic", "Ollama (Local)"],
+    index=0
 )
 
-model_choice = st.sidebar.selectbox(
-    "LLM Model",
-    [
+if provider_choice == "OpenRouter":
+    api_key = st.sidebar.text_input(
+        "OpenRouter API Key",
+        type="password",
+        placeholder="sk-or-v1-...",
+        help="Get your key at openrouter.ai/keys"
+    )
+    model_options = [
         "openrouter/auto",
+        "openrouter/free",
         "openai/gpt-4o-mini",
         "openai/gpt-4o",
         "anthropic/claude-3.5-sonnet",
         "google/gemini-2.0-flash-001",
         "meta-llama/llama-3.3-70b-instruct",
         "deepseek/deepseek-chat"
-    ],
-    index=0
-)
+    ]
+elif provider_choice == "OpenAI":
+    api_key = st.sidebar.text_input(
+        "OpenAI API Key",
+        type="password",
+        placeholder="sk-...",
+        help="Get your key at platform.openai.com/api-keys"
+    )
+    model_options = ["gpt-4o-mini", "gpt-4o", "gpt-4.1-mini", "gpt-4.1"]
+elif provider_choice == "Anthropic":
+    api_key = st.sidebar.text_input(
+        "Anthropic API Key",
+        type="password",
+        placeholder="sk-ant-...",
+        help="Get your key at console.anthropic.com/settings/keys"
+    )
+    model_options = ["claude-3-5-sonnet-latest", "claude-3-7-sonnet-latest", "claude-3-haiku-20240307"]
+else:
+    api_key = ""
+    model_options = ["llama3.1:8b", "mistral", "qwen2.5:7b", "phi3:mini"]
+
+model_choice = st.sidebar.selectbox("LLM Model", model_options, index=0)
+
+if provider_choice == "Ollama (Local)":
+    ollama_url = st.sidebar.text_input(
+        "Ollama URL",
+        value="http://localhost:11434",
+        help="Make sure Ollama is running locally and the selected model is installed."
+    )
+else:
+    ollama_url = "http://localhost:11434"
 
 st.sidebar.markdown("---")
 st.sidebar.markdown("## ⚙️ Settings")
@@ -46,39 +79,103 @@ st.sidebar.markdown("## ⚙️ Settings")
 stock_symbol = st.sidebar.text_input("Stock Symbol", value="AAPL", placeholder="e.g. AAPL, TSLA, NVDA").upper().strip()
 
 st.sidebar.markdown("---")
-st.sidebar.markdown("<small>Powered by OpenRouter API</small>", unsafe_allow_html=True)
+st.sidebar.markdown("<small>Switch between OpenRouter, OpenAI, Anthropic, or local Ollama</small>", unsafe_allow_html=True)
 
 # HELPER FUNCTIONS
-def call_openrouter(system_prompt, user_prompt, api_key, model):
-    if not api_key or not api_key.startswith("sk-or"):
-        return None, "Invalid API key. Please enter a valid OpenRouter key starting with 'sk-or-v1-'."
+def call_llm(system_prompt, user_prompt, provider, api_key, model, ollama_url):
+    if provider == "Ollama (Local)":
+        endpoint = f"{ollama_url.rstrip('/')}/api/chat"
+        payload = {
+            "model": model,
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt}
+            ],
+            "stream": False
+        }
 
-    headers = {
-        "Authorization": f"Bearer {api_key}",
-        "Content-Type": "application/json",
-        "HTTP-Referer": "https://stock-predictor.streamlit.app",
-        "X-Title": "Stock Predictor"
-    }
+        for attempt in range(3):
+            try:
+                time.sleep(1.0)
+                response = requests.post(endpoint, json=payload, timeout=60)
+                response.raise_for_status()
+                data = response.json()
 
-    payload = {
-        "model": model,
-        "messages": [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_prompt}
-        ],
-        "temperature": 0.7,
-        "max_tokens": 800
-    }
+                if "message" in data and isinstance(data["message"], dict) and "content" in data["message"]:
+                    return data["message"]["content"], None
+                return None, f"Unexpected Ollama response: {data}"
+            except requests.exceptions.RequestException as e:
+                if attempt < 2:
+                    time.sleep((attempt + 1) * 2)
+                    continue
+                return None, f"Ollama Error: {str(e)}"
+
+        return None, "Max retries exceeded. Please try again later."
+
+    if provider == "OpenRouter":
+        if not api_key or not api_key.startswith("sk-or"):
+            return None, "Invalid API key. Please enter a valid OpenRouter key starting with 'sk-or-v1-'."
+
+        headers = {
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+            "HTTP-Referer": "https://stock-predictor.streamlit.app",
+            "X-Title": "Stock Predictor"
+        }
+        endpoint = "https://openrouter.ai/api/v1/chat/completions"
+        payload = {
+            "model": model,
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt}
+            ],
+            "temperature": 0.7,
+            "max_tokens": 800
+        }
+    elif provider == "OpenAI":
+        if not api_key:
+            return None, "Invalid API key. Please enter a valid OpenAI key."
+
+        headers = {
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json"
+        }
+        endpoint = "https://api.openai.com/v1/chat/completions"
+        payload = {
+            "model": model,
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt}
+            ],
+            "temperature": 0.7,
+            "max_tokens": 800
+        }
+    elif provider == "Anthropic":
+        if not api_key:
+            return None, "Invalid API key. Please enter a valid Anthropic key."
+
+        headers = {
+            "x-api-key": api_key,
+            "Content-Type": "application/json",
+            "anthropic-version": "2023-06-01"
+        }
+        endpoint = "https://api.anthropic.com/v1/messages"
+        payload = {
+            "model": model,
+            "system": system_prompt,
+            "messages": [
+                {"role": "user", "content": user_prompt}
+            ],
+            "temperature": 0.7,
+            "max_tokens": 800
+        }
+    else:
+        return None, "Unsupported provider selected."
 
     for attempt in range(3):
         try:
             time.sleep(1.5 + random.uniform(0.5, 1.5))
-            response = requests.post(
-                "https://openrouter.ai/api/v1/chat/completions",
-                headers=headers,
-                json=payload,
-                timeout=60
-            )
+            response = requests.post(endpoint, headers=headers, json=payload, timeout=60)
 
             if response.status_code == 429:
                 time.sleep((attempt + 1) * 3)
@@ -86,6 +183,13 @@ def call_openrouter(system_prompt, user_prompt, api_key, model):
 
             response.raise_for_status()
             data = response.json()
+
+            if provider == "Anthropic":
+                if "content" in data and isinstance(data["content"], list):
+                    content_parts = [block.get("text", "") for block in data["content"] if isinstance(block, dict) and block.get("type") == "text"]
+                    if content_parts:
+                        return "".join(content_parts), None
+                return None, f"Unexpected Anthropic response: {data}"
 
             if "choices" in data and len(data["choices"]) > 0:
                 content = data["choices"][0]["message"]["content"]
@@ -128,14 +232,25 @@ def parse_agent_response(content):
     return {"signal": signal, "score": score, "emoji": emoji, "reasoning": content}
 
 # MAIN
-if not api_key:
-    st.info("Enter your OpenRouter API Key in the sidebar to start.")
-    st.markdown("**How to get an API Key:**")
-    st.markdown("1. Go to [openrouter.ai/keys](https://openrouter.ai/keys)")
-    st.markdown("2. Sign up / Log in")
-    st.markdown("3. Click **Create Key**")
-    st.markdown("4. Copy the key (starts with `sk-or-v1-`)")
-    st.markdown("5. Paste it in the sidebar")
+if provider_choice != "Ollama (Local)" and not api_key:
+    st.info("Enter your API key in the sidebar to start.")
+    if provider_choice == "OpenRouter":
+        st.markdown("**How to get an API Key:**")
+        st.markdown("1. Go to [openrouter.ai/keys](https://openrouter.ai/keys)")
+        st.markdown("2. Sign up / Log in")
+        st.markdown("3. Click **Create Key**")
+        st.markdown("4. Copy the key (starts with `sk-or-v1-`)")
+        st.markdown("5. Paste it in the sidebar")
+    elif provider_choice == "OpenAI":
+        st.markdown("**How to get an API Key:**")
+        st.markdown("1. Go to [platform.openai.com/api-keys](https://platform.openai.com/api-keys)")
+        st.markdown("2. Create a new secret key")
+        st.markdown("3. Paste it in the sidebar")
+    elif provider_choice == "Anthropic":
+        st.markdown("**How to get an API Key:**")
+        st.markdown("1. Go to [console.anthropic.com/settings/keys](https://console.anthropic.com/settings/keys)")
+        st.markdown("2. Create a new API key")
+        st.markdown("3. Paste it in the sidebar")
     st.markdown("---")
     st.markdown("**What the Agents Do:**")
     st.markdown("- 📊 **Fundamentals Analyst** - Company financials & valuation")
@@ -235,11 +350,13 @@ for idx, agent in enumerate(agents_config):
         st.markdown(f"<h4 style='color:{agent['color']};margin:0;'>{agent['icon']} {agent['name']}</h4>", unsafe_allow_html=True)
 
         with st.spinner("Thinking..."):
-            content, error = call_openrouter(
+            content, error = call_llm(
                 agent['system'],
                 agent['prompt'],
+                provider_choice,
                 api_key,
-                model_choice
+                model_choice,
+                ollama_url
             )
 
         if error:
@@ -273,7 +390,7 @@ if valid_scores:
     pm_prompt = f"Review the following analyst consensus for {company_name} ({stock_symbol}):\n\n{consensus_summary}\n\nAverage Score: {avg_score:+.2f}/1.00\n\nMake a final decision: STRONG BUY / BUY / HOLD / SELL / STRONG SELL. Include recommended position size (e.g., 5% portfolio allocation) and stop-loss level."
 
     with st.spinner("Portfolio Manager deliberating..."):
-        pm_content, pm_error = call_openrouter(pm_system, pm_prompt, api_key, model_choice)
+        pm_content, pm_error = call_llm(pm_system, pm_prompt, provider_choice, api_key, model_choice, ollama_url)
 
     if pm_error:
         st.error(f"Error: {pm_error}")
@@ -315,4 +432,4 @@ if valid_scores:
         st.plotly_chart(fig, use_container_width=True)
 
 st.markdown("---")
-st.markdown("<center><small>Powered by OpenRouter API | Multi-Agent LLM Debate | Not financial advice</small></center>", unsafe_allow_html=True)
+st.markdown("<center><small>Powered by OpenRouter / OpenAI / Anthropic / Ollama | Multi-Agent LLM Debate | Not financial advice</small></center>", unsafe_allow_html=True)
