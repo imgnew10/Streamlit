@@ -1,580 +1,251 @@
 import streamlit as st
-import yfinance as yf
-import pandas as pd
-import numpy as np
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
+import pandas as pd
+import numpy as np
 from datetime import datetime, timedelta
 import warnings
 warnings.filterwarnings('ignore')
 
-# ==================== OPTIONAL IMPORTS WITH GRACEFUL FALLBACKS ====================
-try:
-    from prophet import Prophet
-    PROPHET_AVAILABLE = True
-except Exception:
-    PROPHET_AVAILABLE = False
+from recommendation_engine import fetch_stock_data, fetch_market_data, calculate_all_signals, generate_forecast
 
-try:
-    from statsmodels.tsa.arima.model import ARIMA
-    STATSMODELS_AVAILABLE = True
-except Exception:
-    STATSMODELS_AVAILABLE = False
+st.set_page_config(page_title="Stock Predictor", page_icon="📈", layout="wide")
 
-# ==================== PAGE CONFIG ====================
-st.set_page_config(
-    page_title="Stock Forecast & Analysis",
-    page_icon="📈",
-    layout="wide",
-    initial_sidebar_state="expanded"
-)
+st.markdown("<h1 style='text-align:center;color:#1f77b4;font-size:2.2rem;'>📈 Stock Price Predictor</h1>", unsafe_allow_html=True)
+st.markdown("<p style='text-align:center;color:#666;font-size:1rem;'>Smart Score + Trend Meter + Alpha Signal + Technical Rating combined into one unified prediction.</p>", unsafe_allow_html=True)
 
-# ==================== CUSTOM CSS ====================
-st.markdown("""
-<style>
-    .main-header {
-        font-size: 2.5rem;
-        font-weight: bold;
-        color: #1f77b4;
-        text-align: center;
-        margin-bottom: 1rem;
-    }
-    .forecast-header {
-        font-size: 1.5rem;
-        color: #2ca02c;
-        font-weight: bold;
-        margin-top: 20px;
-    }
-    .info-box {
-        background-color: #f0f2f6;
-        border-radius: 10px;
-        padding: 15px;
-        margin: 10px 0;
-    }
-</style>
+# ==================== SIDEBAR ====================
+st.sidebar.markdown("## ⚙️ Settings")
+st.sidebar.markdown("---")
+
+stock_symbol = st.sidebar.text_input("Stock Symbol", value="AAPL", placeholder="e.g. AAPL, TSLA, MSFT").upper().strip()
+
+prediction_options = {
+    "1 Day": 1, "3 Days": 3, "1 Week": 5, "2 Weeks": 10,
+    "1 Month": 21, "2 Months": 42, "3 Months": 63,
+    "6 Months": 126, "1 Year": 252
+}
+prediction_label = st.sidebar.selectbox("Prediction Horizon", list(prediction_options.keys()), index=4)
+forecast_days = prediction_options[prediction_label]
+
+st.sidebar.markdown("---")
+st.sidebar.markdown("<small>Data from Yahoo Finance</small>", unsafe_allow_html=True)
+
+if not stock_symbol:
+    st.info("👈 Enter a stock symbol in the sidebar to begin.")
+    st.stop()
+
+# ==================== FETCH DATA ====================
+with st.spinner(f"Analyzing {stock_symbol}..."):
+    data, info, ticker = fetch_stock_data(stock_symbol, period="2y")
+    spy_close = fetch_market_data(period="2y")
+
+if data is None or data.empty:
+    st.error(f"❌ No data found for '{stock_symbol}'. Try another ticker like AAPL, TSLA, MSFT, NVDA, AMZN.")
+    st.stop()
+
+close = data['Close']
+high = data['High']
+low = data['Low']
+last_price = close.iloc[-1]
+
+# ==================== CALCULATE ALL SIGNALS ====================
+results = calculate_all_signals(data, info, ticker, spy_close)
+unified = results['unified']
+score = unified['score']
+signal_text = unified['signal']
+signal_emoji = unified['emoji']
+color = unified['color']
+analyst_target = unified['analyst_target']
+analyst_count = unified['analyst_count']
+
+# ==================== STOCK NOTE CARD ====================
+st.markdown("---")
+company_name = info.get('shortName', stock_symbol) if info else stock_symbol
+sector = info.get('sector', 'N/A') if info else 'N/A'
+industry = info.get('industry', 'N/A') if info else 'N/A'
+market_cap = info.get('marketCap', None)
+mcap_str = f"${market_cap/1e9:.1f}B" if market_cap else "N/A"
+pe_ratio = info.get('trailingPE', 'N/A') if info else 'N/A'
+employees = info.get('fullTimeEmployees', None)
+emp_str = f"{employees:,}" if employees else "N/A"
+website = info.get('website', '') if info else ''
+
+summary = info.get('longBusinessSummary', '') if info else ''
+summary_short = summary[:350] + "..." if len(summary) > 350 else summary
+
+st.markdown(f"""
+<div style="background:linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%);border-radius:16px;padding:20px;margin:10px 0;border-left:6px solid {color};box-shadow:0 2px 8px rgba(0,0,0,0.08);">
+    <div style="display:flex;justify-content:space-between;align-items:flex-start;">
+        <div>
+            <h2 style="margin:0 0 6px 0;color:#1f77b4;font-size:1.6rem;">{company_name} ({stock_symbol})</h2>
+            <p style="margin:0 0 10px 0;color:#555;font-size:0.95rem;">
+                <b>Sector:</b> {sector} &nbsp;|&nbsp; <b>Industry:</b> {industry} &nbsp;|&nbsp; 
+                <b>Market Cap:</b> {mcap_str} &nbsp;|&nbsp; <b>P/E:</b> {pe_ratio if isinstance(pe_ratio, str) else f'{pe_ratio:.1f}'} &nbsp;|&nbsp;
+                <b>Employees:</b> {emp_str}
+            </p>
+        </div>
+        <div style="text-align:right;">
+            <div style="font-size:2rem;font-weight:bold;color:{color};">{signal_emoji}</div>
+            <div style="font-size:0.9rem;color:{color};font-weight:bold;">{signal_text}</div>
+        </div>
+    </div>
+    <p style="margin:8px 0 0 0;color:#444;line-height:1.6;font-size:0.95rem;">{summary_short}</p>
+    {f'<p style="margin:8px 0 0 0;font-size:0.85rem;"><a href="{website}" target="_blank">🌐 {website}</a></p>' if website else ''}
+</div>
 """, unsafe_allow_html=True)
 
-# ==================== INDICATOR FUNCTIONS ====================
-class TechnicalIndicators:
-    @staticmethod
-    def calculate_rsi(data, period=14):
-        delta = data['Close'].diff()
-        gain = (delta.where(delta > 0, 0)).rolling(window=period).mean()
-        loss = (-delta.where(delta < 0, 0)).rolling(window=period).mean()
-        rs = gain / loss
-        return 100 - (100 / (1 + rs))
-
-    @staticmethod
-    def calculate_macd(data, fast=12, slow=26, signal=9):
-        ema_fast = data['Close'].ewm(span=fast, adjust=False).mean()
-        ema_slow = data['Close'].ewm(span=slow, adjust=False).mean()
-        macd = ema_fast - ema_slow
-        macd_signal = macd.ewm(span=signal, adjust=False).mean()
-        return macd, macd_signal, macd - macd_signal
-
-    @staticmethod
-    def calculate_bollinger_bands(data, period=20, std_dev=2):
-        sma = data['Close'].rolling(window=period).mean()
-        std = data['Close'].rolling(window=period).std()
-        return sma + (std * std_dev), sma, sma - (std * std_dev)
-
-    @staticmethod
-    def calculate_sma(data, period):
-        return data['Close'].rolling(window=period).mean()
-
-    @staticmethod
-    def calculate_ema(data, period):
-        return data['Close'].ewm(span=period, adjust=False).mean()
-
-    @staticmethod
-    def calculate_stochastic(data, k_period=14, d_period=3):
-        low_min = data['Low'].rolling(window=k_period).min()
-        high_max = data['High'].rolling(window=k_period).max()
-        k = 100 * ((data['Close'] - low_min) / (high_max - low_min))
-        return k, k.rolling(window=d_period).mean()
-
-    @staticmethod
-    def calculate_atr(data, period=14):
-        high_low = data['High'] - data['Low']
-        high_close = np.abs(data['High'] - data['Close'].shift())
-        low_close = np.abs(data['Low'] - data['Close'].shift())
-        tr = pd.concat([high_low, high_close, low_close], axis=1).max(axis=1)
-        return tr.rolling(period).mean()
-
-    @staticmethod
-    def calculate_adx(data, period=14):
-        plus_dm = data['High'].diff().clip(lower=0)
-        minus_dm = (-data['Low'].diff()).clip(lower=0)
-
-        tr1 = data['High'] - data['Low']
-        tr2 = np.abs(data['High'] - data['Close'].shift(1))
-        tr3 = np.abs(data['Low'] - data['Close'].shift(1))
-        tr = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
-
-        atr = tr.rolling(window=period).mean()
-        plus_di = 100 * (plus_dm.rolling(window=period).mean() / atr)
-        minus_di = abs(100 * (minus_dm.rolling(window=period).mean() / atr))
-        dx = (abs(plus_di - minus_di) / abs(plus_di + minus_di)) * 100
-        return dx.rolling(window=period).mean(), plus_di, minus_di
-
-    @staticmethod
-    def calculate_fibonacci_retracement(data):
-        high = data['High'].max()
-        low = data['Low'].min()
-        diff = high - low
-        return {
-            '0%': high,
-            '23.6%': high - 0.236 * diff,
-            '38.2%': high - 0.382 * diff,
-            '50%': high - 0.5 * diff,
-            '61.8%': high - 0.618 * diff,
-            '78.6%': high - 0.786 * diff,
-            '100%': low
-        }
-
-    @staticmethod
-    def calculate_ichimoku(data):
-        high_9 = data['High'].rolling(window=9).max()
-        low_9 = data['Low'].rolling(window=9).min()
-        tenkan_sen = (high_9 + low_9) / 2
-
-        high_26 = data['High'].rolling(window=26).max()
-        low_26 = data['Low'].rolling(window=26).min()
-        kijun_sen = (high_26 + low_26) / 2
-
-        senkou_span_a = ((tenkan_sen + kijun_sen) / 2).shift(26)
-
-        high_52 = data['High'].rolling(window=52).max()
-        low_52 = data['Low'].rolling(window=52).min()
-        senkou_span_b = ((high_52 + low_52) / 2).shift(26)
-
-        chikou_span = data['Close'].shift(-26)
-
-        return tenkan_sen, kijun_sen, senkou_span_a, senkou_span_b, chikou_span
-
-    @staticmethod
-    def calculate_vwap(data):
-        typical_price = (data['High'] + data['Low'] + data['Close']) / 3
-        return (typical_price * data['Volume']).cumsum() / data['Volume'].cumsum()
-
-    @staticmethod
-    def calculate_mfi(data, period=14):
-        typical_price = (data['High'] + data['Low'] + data['Close']) / 3
-        money_flow = typical_price * data['Volume']
-
-        positive_flow = [0]
-        negative_flow = [0]
-
-        for i in range(1, len(typical_price)):
-            if typical_price.iloc[i] > typical_price.iloc[i-1]:
-                positive_flow.append(money_flow.iloc[i])
-                negative_flow.append(0)
-            elif typical_price.iloc[i] < typical_price.iloc[i-1]:
-                positive_flow.append(0)
-                negative_flow.append(money_flow.iloc[i])
-            else:
-                positive_flow.append(0)
-                negative_flow.append(0)
-
-        positive_mf = pd.Series(positive_flow, index=data.index).rolling(window=period).sum()
-        negative_mf = pd.Series(negative_flow, index=data.index).rolling(window=period).sum()
-
-        return 100 - (100 / (1 + positive_mf / negative_mf))
-
-    @staticmethod
-    def calculate_parabolic_sar(data, af=0.02, max_af=0.2):
-        high = data['High'].values
-        low = data['Low'].values
-        close = data['Close'].values
-
-        sar = close.copy()
-        trend = [1]
-        ep = [high[0]]
-        af_values = [af]
-
-        for i in range(1, len(close)):
-            if trend[-1] == 1:
-                sar[i] = sar[i-1] + af_values[-1] * (ep[-1] - sar[i-1])
-                if low[i] < sar[i]:
-                    trend.append(-1)
-                    sar[i] = ep[-1]
-                    ep.append(low[i])
-                    af_values.append(af)
-                else:
-                    trend.append(1)
-                    if high[i] > ep[-1]:
-                        ep.append(high[i])
-                        af_values.append(min(af_values[-1] + af, max_af))
-                    else:
-                        ep.append(ep[-1])
-                        af_values.append(af_values[-1])
-            else:
-                sar[i] = sar[i-1] + af_values[-1] * (ep[-1] - sar[i-1])
-                if high[i] > sar[i]:
-                    trend.append(1)
-                    sar[i] = ep[-1]
-                    ep.append(high[i])
-                    af_values.append(af)
-                else:
-                    trend.append(-1)
-                    if low[i] < ep[-1]:
-                        ep.append(low[i])
-                        af_values.append(min(af_values[-1] + af, max_af))
-                    else:
-                        ep.append(ep[-1])
-                        af_values.append(af_values[-1])
-
-        return pd.Series(sar, index=data.index)
-
-
-# ==================== FORECASTING FUNCTIONS ====================
-class Forecasting:
-    @staticmethod
-    def arima_forecast(data, periods=30):
-        if not STATSMODELS_AVAILABLE:
-            return None, "ARIMA not available (install: pip install statsmodels)"
-        try:
-            series = data['Close'].dropna()
-            model = ARIMA(series, order=(5, 1, 0))
-            fitted = model.fit()
-            forecast = fitted.forecast(steps=periods)
-            conf_int = fitted.get_forecast(steps=periods).conf_int()
-
-            future_dates = pd.date_range(start=series.index[-1] + timedelta(days=1), periods=periods, freq='B')
-            return pd.DataFrame({
-                'Date': future_dates,
-                'Forecast': forecast.values,
-                'Lower': conf_int.iloc[:, 0].values,
-                'Upper': conf_int.iloc[:, 1].values
-            }), "ARIMA Forecast"
-        except Exception as e:
-            return None, f"ARIMA Error: {str(e)}"
-
-    @staticmethod
-    def prophet_forecast(data, periods=30):
-        if not PROPHET_AVAILABLE:
-            return None, "Prophet not available (install: pip install prophet)"
-        try:
-            df = data.reset_index()[['Date', 'Close']].rename(columns={'Date': 'ds', 'Close': 'y'}).dropna()
-            model = Prophet(daily_seasonality=True, yearly_seasonality=True, changepoint_prior_scale=0.05)
-            model.fit(df)
-            future = model.make_future_dataframe(periods=periods)
-            forecast = model.predict(future)
-            forecast_df = forecast[['ds', 'yhat', 'yhat_lower', 'yhat_upper']].tail(periods)
-            forecast_df.columns = ['Date', 'Forecast', 'Lower', 'Upper']
-            return forecast_df, "Prophet Forecast"
-        except Exception as e:
-            return None, f"Prophet Error: {str(e)}"
-
-    @staticmethod
-    def moving_average_forecast(data, periods=30, window=20):
-        try:
-            ma = data['Close'].rolling(window=window).mean().iloc[-1]
-            trend = (data['Close'].iloc[-1] - data['Close'].iloc[-window]) / window
-            std = data['Close'].tail(window).std()
-
-            forecasts, lower, upper = [], [], []
-            for i in range(1, periods + 1):
-                pred = ma + (trend * i)
-                forecasts.append(pred)
-                lower.append(pred - 1.96 * std)
-                upper.append(pred + 1.96 * std)
-
-            future_dates = pd.date_range(start=data.index[-1] + timedelta(days=1), periods=periods, freq='B')
-            return pd.DataFrame({
-                'Date': future_dates,
-                'Forecast': forecasts,
-                'Lower': lower,
-                'Upper': upper
-            }), "Moving Average + Trend Forecast"
-        except Exception as e:
-            return None, f"MA Error: {str(e)}"
-
-    @staticmethod
-    def monte_carlo_simulation(data, periods=30, simulations=1000):
-        try:
-            returns = data['Close'].pct_change().dropna()
-            mu, sigma = returns.mean(), returns.std()
-            last_price = data['Close'].iloc[-1]
-
-            simulation_results = []
-            for _ in range(simulations):
-                prices = [last_price]
-                for _ in range(periods):
-                    prices.append(prices[-1] * (1 + np.random.normal(mu, sigma)))
-                simulation_results.append(prices[1:])
-
-            simulation_array = np.array(simulation_results)
-            future_dates = pd.date_range(start=data.index[-1] + timedelta(days=1), periods=periods, freq='B')
-            return pd.DataFrame({
-                'Date': future_dates,
-                'Forecast': np.mean(simulation_array, axis=0),
-                'Lower': np.percentile(simulation_array, 5, axis=0),
-                'Upper': np.percentile(simulation_array, 95, axis=0)
-            }), "Monte Carlo Simulation"
-        except Exception as e:
-            return None, f"Monte Carlo Error: {str(e)}"
-
-
-# ==================== CHARTING FUNCTIONS ====================
-class ChartBuilder:
-    @staticmethod
-    def create_candlestick_chart(data, indicators=None):
-        fig = make_subplots(
-            rows=3, cols=1,
-            shared_xaxes=True,
-            vertical_spacing=0.05,
-            row_heights=[0.6, 0.2, 0.2],
-            subplot_titles=('Price', 'Volume', 'RSI')
-        )
-
-        fig.add_trace(go.Candlestick(
-            x=data.index, open=data['Open'], high=data['High'],
-            low=data['Low'], close=data['Close'], name='OHLC'
-        ), row=1, col=1)
-
-        if indicators and 'BB' in indicators:
-            upper, middle, lower = TechnicalIndicators.calculate_bollinger_bands(data)
-            fig.add_trace(go.Scatter(x=data.index, y=upper, name='BB Upper', line=dict(color='rgba(255,0,0,0.3)')), row=1, col=1)
-            fig.add_trace(go.Scatter(x=data.index, y=middle, name='BB Middle', line=dict(color='rgba(255,0,0,0.5)')), row=1, col=1)
-            fig.add_trace(go.Scatter(x=data.index, y=lower, name='BB Lower', line=dict(color='rgba(255,0,0,0.3)')), row=1, col=1)
-
-        if indicators and 'SMA' in indicators:
-            fig.add_trace(go.Scatter(x=data.index, y=TechnicalIndicators.calculate_sma(data, 20), name='SMA 20', line=dict(color='orange')), row=1, col=1)
-            fig.add_trace(go.Scatter(x=data.index, y=TechnicalIndicators.calculate_sma(data, 50), name='SMA 50', line=dict(color='blue')), row=1, col=1)
-
-        if indicators and 'EMA' in indicators:
-            fig.add_trace(go.Scatter(x=data.index, y=TechnicalIndicators.calculate_ema(data, 12), name='EMA 12', line=dict(color='purple')), row=1, col=1)
-            fig.add_trace(go.Scatter(x=data.index, y=TechnicalIndicators.calculate_ema(data, 26), name='EMA 26', line=dict(color='green')), row=1, col=1)
-
-        if indicators and 'VWAP' in indicators:
-            fig.add_trace(go.Scatter(x=data.index, y=TechnicalIndicators.calculate_vwap(data), name='VWAP', line=dict(color='cyan')), row=1, col=1)
-
-        if indicators and 'Ichimoku' in indicators:
-            tenkan, kijun, senkou_a, senkou_b, chikou = TechnicalIndicators.calculate_ichimoku(data)
-            fig.add_trace(go.Scatter(x=data.index, y=tenkan, name='Tenkan-sen', line=dict(color='red')), row=1, col=1)
-            fig.add_trace(go.Scatter(x=data.index, y=kijun, name='Kijun-sen', line=dict(color='blue')), row=1, col=1)
-            fig.add_trace(go.Scatter(x=data.index, y=senkou_a, name='Senkou A', line=dict(color='green')), row=1, col=1)
-            fig.add_trace(go.Scatter(x=data.index, y=senkou_b, name='Senkou B', line=dict(color='orange')), row=1, col=1)
-
-        if indicators and 'Parabolic SAR' in indicators:
-            psar = TechnicalIndicators.calculate_parabolic_sar(data)
-            fig.add_trace(go.Scatter(x=data.index, y=psar, name='Parabolic SAR', mode='markers', marker=dict(size=3, color='purple')), row=1, col=1)
-
-        colors = ['green' if data['Close'].iloc[i] >= data['Open'].iloc[i] else 'red' for i in range(len(data))]
-        fig.add_trace(go.Bar(x=data.index, y=data['Volume'], name='Volume', marker_color=colors), row=2, col=1)
-
-        rsi = TechnicalIndicators.calculate_rsi(data)
-        fig.add_trace(go.Scatter(x=data.index, y=rsi, name='RSI', line=dict(color='purple')), row=3, col=1)
-        fig.add_hline(y=70, line_dash="dash", line_color="red", row=3, col=1)
-        fig.add_hline(y=30, line_dash="dash", line_color="green", row=3, col=1)
-
-        fig.update_layout(title='Stock Price Analysis', yaxis_title='Price', xaxis_rangeslider_visible=False, height=800, template='plotly_white')
-        return fig
-
-    @staticmethod
-    def create_forecast_chart(data, forecast_df, model_name):
-        fig = go.Figure()
-        fig.add_trace(go.Scatter(x=data.index, y=data['Close'], name='Historical', line=dict(color='blue')))
-        fig.add_trace(go.Scatter(x=forecast_df['Date'], y=forecast_df['Forecast'], name=f'{model_name} Forecast', line=dict(color='red', dash='dash')))
-        fig.add_trace(go.Scatter(
-            x=forecast_df['Date'].tolist() + forecast_df['Date'].tolist()[::-1],
-            y=forecast_df['Upper'].tolist() + forecast_df['Lower'].tolist()[::-1],
-            fill='toself', fillcolor='rgba(255,0,0,0.1)', line=dict(color='rgba(255,255,255,0)'), name='Confidence Interval'
-        ))
-        fig.update_layout(title=f'Price Forecast - {model_name}', xaxis_title='Date', yaxis_title='Price', height=500, template='plotly_white')
-        return fig
-
-    @staticmethod
-    def create_macd_chart(data):
-        macd, signal, hist = TechnicalIndicators.calculate_macd(data)
-        fig = make_subplots(rows=1, cols=1)
-        fig.add_trace(go.Scatter(x=data.index, y=macd, name='MACD', line=dict(color='blue')))
-        fig.add_trace(go.Scatter(x=data.index, y=signal, name='Signal', line=dict(color='red')))
-        fig.add_trace(go.Bar(x=data.index, y=hist, name='Histogram', marker_color=['green' if h >= 0 else 'red' for h in hist]))
-        fig.add_hline(y=0, line_dash="dash", line_color="black")
-        fig.update_layout(title='MACD', height=300, template='plotly_white')
-        return fig
-
-    @staticmethod
-    def create_stochastic_chart(data):
-        k, d = TechnicalIndicators.calculate_stochastic(data)
-        fig = go.Figure()
-        fig.add_trace(go.Scatter(x=data.index, y=k, name='%K', line=dict(color='blue')))
-        fig.add_trace(go.Scatter(x=data.index, y=d, name='%D', line=dict(color='red')))
-        fig.add_hline(y=80, line_dash="dash", line_color="red")
-        fig.add_hline(y=20, line_dash="dash", line_color="green")
-        fig.update_layout(title='Stochastic Oscillator', height=300, template='plotly_white')
-        return fig
-
-    @staticmethod
-    def create_adx_chart(data):
-        adx, plus_di, minus_di = TechnicalIndicators.calculate_adx(data)
-        fig = go.Figure()
-        fig.add_trace(go.Scatter(x=data.index, y=adx, name='ADX', line=dict(color='black')))
-        fig.add_trace(go.Scatter(x=data.index, y=plus_di, name='+DI', line=dict(color='green')))
-        fig.add_trace(go.Scatter(x=data.index, y=minus_di, name='-DI', line=dict(color='red')))
-        fig.add_hline(y=25, line_dash="dash", line_color="gray")
-        fig.update_layout(title='ADX', height=300, template='plotly_white')
-        return fig
-
-
-# ==================== MAIN APP ====================
-def main():
-    st.markdown('<div class="main-header">📈 Stock Forecast & Technical Analysis</div>', unsafe_allow_html=True)
-
-    # Show available models
-    available_models = ["Moving Average + Trend", "Monte Carlo Simulation"]
-    if PROPHET_AVAILABLE:
-        available_models.insert(0, "Prophet")
-    if STATSMODELS_AVAILABLE:
-        available_models.insert(0, "ARIMA")
-
-    if not PROPHET_AVAILABLE and not STATSMODELS_AVAILABLE:
-        st.info("💡 **Tip:** Install `prophet` and `statsmodels` for advanced forecasting models. Currently using lightweight models.")
-
-    st.sidebar.header("⚙️ Configuration")
-
-    stock_symbol = st.sidebar.text_input("Enter Stock Symbol", value="AAPL").upper()
-
-    period = st.sidebar.selectbox("Select Time Period", ["1mo", "3mo", "6mo", "1y", "2y", "5y", "max"], index=3)
-    interval = st.sidebar.selectbox("Select Interval", ["1d", "1wk", "1mo"], index=0)
-
-    st.sidebar.header("📊 Technical Indicators")
-    show_bb = st.sidebar.checkbox("Bollinger Bands", value=True)
-    show_sma = st.sidebar.checkbox("SMA (20, 50)", value=True)
-    show_ema = st.sidebar.checkbox("EMA (12, 26)", value=False)
-    show_vwap = st.sidebar.checkbox("VWAP", value=False)
-    show_ichimoku = st.sidebar.checkbox("Ichimoku Cloud", value=False)
-    show_psar = st.sidebar.checkbox("Parabolic SAR", value=False)
-
-    st.sidebar.header("🔮 Forecast Settings")
-    forecast_days = st.sidebar.slider("Forecast Days", 7, 90, 30)
-    forecast_model = st.sidebar.selectbox("Forecast Model", available_models)
-
-    if st.sidebar.button("🚀 Analyze Stock", type="primary"):
-        with st.spinner(f"Fetching data for {stock_symbol}..."):
-            try:
-                ticker = yf.Ticker(stock_symbol)
-                data = ticker.history(period=period, interval=interval)
-                info = ticker.info
-
-                if data.empty:
-                    st.error(f"No data found for {stock_symbol}. Please check the symbol.")
-                    return
-
-                # Key Metrics
-                col1, col2, col3, col4 = st.columns(4)
-                with col1:
-                    st.metric("Company", info.get('shortName', stock_symbol))
-                with col2:
-                    st.metric("Current Price", f"${data['Close'].iloc[-1]:.2f}")
-                with col3:
-                    change = ((data['Close'].iloc[-1] - data['Close'].iloc[-2]) / data['Close'].iloc[-2]) * 100
-                    st.metric("Daily Change", f"{change:.2f}%", delta=f"{change:.2f}%")
-                with col4:
-                    st.metric("Volume", f"{data['Volume'].iloc[-1]:,.0f}")
-
-                # Statistics
-                st.subheader("📈 Key Statistics")
-                mcol1, mcol2, mcol3, mcol4, mcol5 = st.columns(5)
-                with mcol1:
-                    st.metric("52W High", f"${data['High'].max():.2f}")
-                with mcol2:
-                    st.metric("52W Low", f"${data['Low'].min():.2f}")
-                with mcol3:
-                    st.metric("Avg Volume", f"{data['Volume'].mean():,.0f}")
-                with mcol4:
-                    volatility = data['Close'].pct_change().std() * np.sqrt(252) * 100
-                    st.metric("Volatility", f"{volatility:.1f}%")
-                with mcol5:
-                    returns = ((data['Close'].iloc[-1] / data['Close'].iloc[0]) - 1) * 100
-                    st.metric("Period Return", f"{returns:.1f}%")
-
-                # Main Chart
-                st.subheader("📊 Price Chart with Indicators")
-                indicators = []
-                if show_bb: indicators.append('BB')
-                if show_sma: indicators.append('SMA')
-                if show_ema: indicators.append('EMA')
-                if show_vwap: indicators.append('VWAP')
-                if show_ichimoku: indicators.append('Ichimoku')
-                if show_psar: indicators.append('Parabolic SAR')
-
-                main_chart = ChartBuilder.create_candlestick_chart(data, indicators)
-                st.plotly_chart(main_chart, use_container_width=True)
-
-                # Secondary Charts
-                st.subheader("📉 Additional Indicators")
-                c1, c2 = st.columns(2)
-                with c1:
-                    st.plotly_chart(ChartBuilder.create_macd_chart(data), use_container_width=True)
-                with c2:
-                    st.plotly_chart(ChartBuilder.create_stochastic_chart(data), use_container_width=True)
-
-                c3, c4 = st.columns(2)
-                with c3:
-                    st.plotly_chart(ChartBuilder.create_adx_chart(data), use_container_width=True)
-                with c4:
-                    mfi = TechnicalIndicators.calculate_mfi(data)
-                    fig_mfi = go.Figure()
-                    fig_mfi.add_trace(go.Scatter(x=data.index, y=mfi, name='MFI', line=dict(color='orange')))
-                    fig_mfi.add_hline(y=80, line_dash="dash", line_color="red")
-                    fig_mfi.add_hline(y=20, line_dash="dash", line_color="green")
-                    fig_mfi.update_layout(title='Money Flow Index (MFI)', height=300, template='plotly_white')
-                    st.plotly_chart(fig_mfi, use_container_width=True)
-
-                # Fibonacci
-                st.subheader("📏 Fibonacci Retracement Levels")
-                fib_levels = TechnicalIndicators.calculate_fibonacci_retracement(data)
-                st.dataframe(pd.DataFrame(list(fib_levels.items()), columns=['Level', 'Price']), use_container_width=True)
-
-                # Forecast
-                st.markdown('<div class="forecast-header">🔮 Price Forecast</div>', unsafe_allow_html=True)
-
-                with st.spinner(f"Running {forecast_model} forecast..."):
-                    if forecast_model == "Prophet":
-                        forecast_df, msg = Forecasting.prophet_forecast(data, forecast_days)
-                    elif forecast_model == "ARIMA":
-                        forecast_df, msg = Forecasting.arima_forecast(data, forecast_days)
-                    elif forecast_model == "Moving Average + Trend":
-                        forecast_df, msg = Forecasting.moving_average_forecast(data, forecast_days)
-                    else:
-                        forecast_df, msg = Forecasting.monte_carlo_simulation(data, forecast_days)
-
-                    if forecast_df is not None:
-                        st.plotly_chart(ChartBuilder.create_forecast_chart(data, forecast_df, forecast_model), use_container_width=True)
-
-                        st.subheader("📋 Forecast Details")
-                        forecast_df['Date'] = forecast_df['Date'].dt.strftime('%Y-%m-%d')
-                        st.dataframe(forecast_df, use_container_width=True)
-
-                        last_price = data['Close'].iloc[-1]
-                        predicted_price = forecast_df['Forecast'].iloc[-1]
-                        predicted_change = ((predicted_price - last_price) / last_price) * 100
-
-                        fcol1, fcol2, fcol3 = st.columns(3)
-                        with fcol1:
-                            st.metric("Current Price", f"${last_price:.2f}")
-                        with fcol2:
-                            st.metric(f"Predicted Price ({forecast_days}d)", f"${predicted_price:.2f}")
-                        with fcol3:
-                            st.metric("Predicted Change", f"{predicted_change:.2f}%", delta=f"{predicted_change:.2f}%")
-                    else:
-                        st.warning(msg)
-
-                with st.expander("📋 View Raw Data"):
-                    st.dataframe(data.tail(50), use_container_width=True)
-
-                csv = data.to_csv().encode('utf-8')
-                st.download_button(label="📥 Download Data as CSV", data=csv, file_name=f'{stock_symbol}_data.csv', mime='text/csv')
-
-            except Exception as e:
-                st.error(f"Error: {str(e)}")
-                st.info("Please check the stock symbol and try again.")
-
+# ==================== METRICS ROW ====================
+change = ((close.iloc[-1] - close.iloc[-2]) / close.iloc[-2]) * 100
+volatility = close.pct_change().std() * np.sqrt(252) * 100
+period_return = ((close.iloc[-1] / close.iloc[0]) - 1) * 100
+yr_high = high.max()
+yr_low = low.min()
+
+future_dates, mean_f, p10, p90 = generate_forecast(data, score, forecast_days)
+pred_price = mean_f[-1]
+pred_change = ((pred_price - last_price) / last_price) * 100
+
+m1, m2, m3, m4, m5, m6, m7 = st.columns(7)
+with m1:
+    st.metric("Price", f"${last_price:.2f}")
+with m2:
+    st.metric("1D Change", f"{change:+.2f}%")
+with m3:
+    st.metric(f"{prediction_label} Target", f"${pred_price:.2f}", f"{pred_change:+.1f}%")
+with m4:
+    st.metric("Smart Score", f"{unified['smart_score']:+.2f}")
+with m5:
+    st.metric("Trend Meter", f"{unified['trend_score']:+.2f}")
+with m6:
+    st.metric("Alpha Signal", f"{unified['alpha_score']:+.2f}")
+with m7:
+    st.metric("Tech Rating", f"{unified['tech_score']:+.2f}")
+
+# ==================== MAIN CHART ====================
+sma20 = close.rolling(20).mean()
+sma50 = close.rolling(50).mean()
+ema12 = close.ewm(span=12, adjust=False).mean()
+ema26 = close.ewm(span=26, adjust=False).mean()
+bb_sma = close.rolling(20).mean()
+bb_std = close.rolling(20).std()
+bb_upper = bb_sma + 2 * bb_std
+bb_lower = bb_sma - 2 * bb_std
+tp = (high + low + close) / 3
+vwap = (tp * data['Volume']).cumsum() / data['Volume'].cumsum()
+
+macd_line = ema12 - ema26
+macd_signal_line = macd_line.ewm(span=9, adjust=False).mean()
+macd_hist = macd_line - macd_signal_line
+
+delta = close.diff()
+gain = delta.where(delta > 0, 0).rolling(14).mean()
+loss = (-delta.where(delta < 0, 0)).rolling(14).mean()
+rsi = 100 - (100 / (1 + gain / loss))
+
+fig = make_subplots(
+    rows=3, cols=1,
+    shared_xaxes=True,
+    vertical_spacing=0.08,
+    row_heights=[0.55, 0.25, 0.20],
+    subplot_titles=(f"{company_name} ({stock_symbol}) — Price & {prediction_label} Forecast", "MACD", "RSI")
+)
+
+fig.add_trace(go.Scatter(x=close.index, y=close.values, name="Price", line=dict(color="#1f77b4", width=2)), row=1, col=1)
+fig.add_trace(go.Scatter(x=sma20.index, y=sma20.values, name="SMA 20", line=dict(color="orange", width=1, dash="dot")), row=1, col=1)
+fig.add_trace(go.Scatter(x=sma50.index, y=sma50.values, name="SMA 50", line=dict(color="purple", width=1, dash="dot")), row=1, col=1)
+fig.add_trace(go.Scatter(x=bb_upper.index, y=bb_upper.values, name="BB Upper", line=dict(color="rgba(255,0,0,0.3)", width=1), showlegend=False), row=1, col=1)
+fig.add_trace(go.Scatter(x=bb_lower.index, y=bb_lower.values, name="BB Lower", line=dict(color="rgba(255,0,0,0.3)", width=1), fill="tonexty", fillcolor="rgba(255,0,0,0.05)", showlegend=False), row=1, col=1)
+fig.add_trace(go.Scatter(x=vwap.index, y=vwap.values, name="VWAP", line=dict(color="cyan", width=1)), row=1, col=1)
+
+fig.add_trace(go.Scatter(x=future_dates, y=mean_f, name=f"Forecast ({prediction_label})", line=dict(color="#2ca02c", width=2.5, dash="dash")), row=1, col=1)
+fig.add_trace(go.Scatter(x=list(future_dates)+list(future_dates)[::-1], y=list(p90)+list(p10)[::-1], fill="toself", fillcolor="rgba(44,160,44,0.15)", line=dict(color="rgba(0,0,0,0)"), name="Confidence (10%-90%)", hoverinfo="skip"), row=1, col=1)
+
+if analyst_target and not np.isnan(analyst_target):
+    fig.add_hline(y=analyst_target, line=dict(color="gold", width=2, dash="dashdot"), annotation_text=f"Analyst Target: ${analyst_target:.2f}", annotation_position="top right", row=1, col=1)
+
+fig.add_vline(x=close.index[-1], line=dict(color="gray", width=1, dash="dash"), annotation_text="Forecast Start", annotation_position="top", row=1, col=1)
+
+fig.add_trace(go.Scatter(x=data.index, y=macd_line.values, name="MACD", line=dict(color="blue", width=1)), row=2, col=1)
+fig.add_trace(go.Scatter(x=data.index, y=macd_signal_line.values, name="Signal", line=dict(color="red", width=1)), row=2, col=1)
+fig.add_trace(go.Bar(x=data.index, y=macd_hist.values, name="Histogram", marker_color=['green' if h >= 0 else 'red' for h in macd_hist]), row=2, col=1)
+fig.add_hline(y=0, line=dict(color="black", width=0.5), row=2, col=1)
+
+fig.add_trace(go.Scatter(x=data.index, y=rsi.values, name="RSI", line=dict(color="purple", width=1.5)), row=3, col=1)
+fig.add_hline(y=70, line=dict(color="red", width=1, dash="dash"), row=3, col=1)
+fig.add_hline(y=30, line=dict(color="green", width=1, dash="dash"), row=3, col=1)
+
+fig.update_layout(
+    height=780,
+    template="plotly_white",
+    hovermode="x unified",
+    showlegend=True,
+    legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+    xaxis_rangeslider_visible=False,
+    margin=dict(l=50, r=50, t=100, b=50)
+)
+fig.update_yaxes(title_text="Price ($)", row=1, col=1)
+fig.update_yaxes(title_text="MACD", row=2, col=1)
+fig.update_yaxes(title_text="RSI", row=3, col=1)
+
+st.plotly_chart(fig, use_container_width=True)
+
+# ==================== SIGNAL BREAKDOWN ====================
+st.markdown("---")
+st.subheader(f"🔍 Unified Score: {score:+.2f}/1.00 — {signal_emoji} {signal_text}")
+
+c1, c2, c3, c4 = st.columns(4)
+with c1:
+    st.markdown("**📊 Smart Score** (40% weight)")
+    ss = unified['smart_score']
+    st.progress((ss + 1) / 2, text=f"{ss:+.2f}")
+    for k, v in results['smart_score'].items():
+        st.write(f"• {k}: {v}")
+with c2:
+    st.markdown("**📈 Trend Meter** (25% weight)")
+    ts = unified['trend_score']
+    st.progress((ts + 1) / 2, text=f"{ts:+.2f}")
+    for k, v in results['trend_meter'].items():
+        st.write(f"• {k}: {v}")
+with c3:
+    st.markdown("**⚡ Alpha Signal** (20% weight)")
+    als = unified['alpha_score']
+    st.progress((als + 1) / 2, text=f"{als:+.2f}")
+    for k, v in results['alpha_signal'].items():
+        st.write(f"• {k}: {v}")
+with c4:
+    st.markdown("**🔮 Technical Rating** (15% weight)")
+    tr = unified['tech_score']
+    st.progress((tr + 1) / 2, text=f"{tr:+.2f}")
+    for k, v in results['technical_rating'].items():
+        st.write(f"• {k}: {v}")
+    if results['patterns']:
+        st.markdown("**📋 Patterns Detected:**")
+        for pattern, direction in results['patterns'].items():
+            st.write(f"• {pattern}: {direction}")
+
+if analyst_count > 0 or analyst_target:
     st.markdown("---")
-    st.markdown("<center>Built with ❤️ using Streamlit, Plotly, and Yahoo Finance</center>", unsafe_allow_html=True)
+    acol1, acol2, acol3 = st.columns(3)
+    with acol1:
+        st.metric("Analysts Covering", f"{analyst_count}")
+    with acol2:
+        if analyst_target and not np.isnan(analyst_target):
+            upside = ((analyst_target - last_price) / last_price) * 100
+            st.metric("Analyst Target", f"${analyst_target:.2f}", f"{upside:+.1f}%")
+    with acol3:
+        st.metric("52W Range", f"${yr_low:.2f} - ${yr_high:.2f}")
 
-if __name__ == "__main__":
-    main()
+with st.expander("📋 View Forecast Data"):
+    forecast_df = pd.DataFrame({
+        "Date": future_dates.strftime("%Y-%m-%d"),
+        "Predicted": mean_f.round(2),
+        "Low (10%)": p10.round(2),
+        "High (90%)": p90.round(2)
+    })
+    st.dataframe(forecast_df, use_container_width=True)
+    csv = forecast_df.to_csv(index=False).encode('utf-8')
+    st.download_button("📥 Download Forecast CSV", csv, f"{stock_symbol}_forecast.csv", "text/csv")
+
+st.markdown("---")
+st.markdown("<center><small>Data from Yahoo Finance | Smart Score + Trend Meter + Alpha Signal + Technical Rating combined | Not financial advice</small></center>", unsafe_allow_html=True)
