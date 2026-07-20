@@ -29,6 +29,7 @@ api_key = st.sidebar.text_input(
 model_choice = st.sidebar.selectbox(
     "LLM Model",
     [
+        "openrouter/auto",
         "openai/gpt-4o-mini",
         "openai/gpt-4o",
         "anthropic/claude-3.5-sonnet",
