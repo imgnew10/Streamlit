@@ -29,7 +29,6 @@ if provider_choice == "OpenRouter":
     api_key = st.sidebar.text_input(
         "OpenRouter API Key",
         type="password",
-        value="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",
         placeholder="sk-or-v1-...",
         help="Get your key at openrouter.ai/keys"
     )
