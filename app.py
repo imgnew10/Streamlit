@@ -102,7 +102,13 @@ period_return = ((close.iloc[-1] / close.iloc[0]) - 1) * 100
 yr_high = high.max()
 yr_low = low.min()
 
-future_dates, mean_f, p10, p90 = generate_forecast(data, score, forecast_days)
+future_dates, mean_f, p10, p90 = generate_forecast(
+    data,
+    score,
+    forecast_days,
+    support_levels=results.get('support_levels', []),
+    resistance_levels=results.get('resistance_levels', [])
+)
 pred_price = mean_f[-1]
 pred_change = ((pred_price - last_price) / last_price) * 100
 
@@ -157,6 +163,60 @@ fig.add_trace(go.Scatter(x=sma50.index, y=sma50.values, name="SMA 50", line=dict
 fig.add_trace(go.Scatter(x=bb_upper.index, y=bb_upper.values, name="BB Upper", line=dict(color="rgba(255,0,0,0.3)", width=1), showlegend=False), row=1, col=1)
 fig.add_trace(go.Scatter(x=bb_lower.index, y=bb_lower.values, name="BB Lower", line=dict(color="rgba(255,0,0,0.3)", width=1), fill="tonexty", fillcolor="rgba(255,0,0,0.05)", showlegend=False), row=1, col=1)
 fig.add_trace(go.Scatter(x=vwap.index, y=vwap.values, name="VWAP", line=dict(color="cyan", width=1)), row=1, col=1)
+
+support_levels = results.get('support_levels', [])
+resistance_levels = results.get('resistance_levels', [])
+for idx, level in enumerate(support_levels):
+    fig.add_hline(y=level, line=dict(color="green", width=1, dash="dot"), annotation_text=f"Support {idx+1}: ${level:.2f}", annotation_position="bottom left", row=1, col=1)
+    fig.add_shape(
+        type="rect",
+        xref="x",
+        yref="y",
+        x0=close.index[0],
+        x1=close.index[-1],
+        y0=level * 0.995,
+        y1=level * 1.005,
+        fillcolor="rgba(0,128,0,0.08)",
+        line=dict(width=0),
+        row=1,
+        col=1
+    )
+for idx, level in enumerate(resistance_levels):
+    fig.add_hline(y=level, line=dict(color="red", width=1, dash="dot"), annotation_text=f"Resistance {idx+1}: ${level:.2f}", annotation_position="top left", row=1, col=1)
+    fig.add_shape(
+        type="rect",
+        xref="x",
+        yref="y",
+        x0=close.index[0],
+        x1=close.index[-1],
+        y0=level * 0.995,
+        y1=level * 1.005,
+        fillcolor="rgba(255,0,0,0.08)",
+        line=dict(width=0),
+        row=1,
+        col=1
+    )
+
+buy_signals = [s for s in results.get('trade_signals', []) if s['signal'] == 'Buy']
+sell_signals = [s for s in results.get('trade_signals', []) if s['signal'] == 'Sell']
+fig.add_trace(go.Scatter(
+    x=[s['date'] for s in buy_signals],
+    y=[s['price'] for s in buy_signals],
+    mode='markers',
+    marker=dict(symbol='triangle-up', color='green', size=12),
+    name='Buy Signal',
+    hovertemplate='Buy: %{y:.2f}<br>%{x|%Y-%m-%d}<br>%{text}',
+    text=[s['reason'] for s in buy_signals]
+), row=1, col=1)
+fig.add_trace(go.Scatter(
+    x=[s['date'] for s in sell_signals],
+    y=[s['price'] for s in sell_signals],
+    mode='markers',
+    marker=dict(symbol='triangle-down', color='red', size=12),
+    name='Sell Signal',
+    hovertemplate='Sell: %{y:.2f}<br>%{x|%Y-%m-%d}<br>%{text}',
+    text=[s['reason'] for s in sell_signals]
+), row=1, col=1)
 
 fig.add_trace(go.Scatter(x=future_dates, y=mean_f, name=f"Forecast ({prediction_label})", line=dict(color="#2ca02c", width=2.5, dash="dash")), row=1, col=1)
 fig.add_trace(go.Scatter(x=list(future_dates)+list(future_dates)[::-1], y=list(p90)+list(p10)[::-1], fill="toself", fillcolor="rgba(44,160,44,0.15)", line=dict(color="rgba(0,0,0,0)"), name="Confidence (10%-90%)", hoverinfo="skip"), row=1, col=1)
@@ -236,6 +296,41 @@ if analyst_count > 0 or analyst_target:
     with acol3:
         st.metric("52W Range", f"${yr_low:.2f} - ${yr_high:.2f}")
 
+st.markdown("---")
+with st.expander("🧭 Support & Resistance Zones"):
+    support_levels = results.get('support_levels', [])
+    resistance_levels = results.get('resistance_levels', [])
+    if support_levels:
+        st.write("**Support Zones**")
+        for idx, level in enumerate(support_levels, start=1):
+            st.write(f"• Support {idx}: ${level:.2f}")
+    else:
+        st.write("No support zones detected.")
+
+    if resistance_levels:
+        st.write("**Resistance Zones**")
+        for idx, level in enumerate(resistance_levels, start=1):
+            st.write(f"• Resistance {idx}: ${level:.2f}")
+    else:
+        st.write("No resistance zones detected.")
+
+st.markdown("---")
+with st.expander("� Recent Buy/Sell Summary"):
+    trade_signals = results.get('trade_signals', [])
+    if trade_signals:
+        signal_df = pd.DataFrame(trade_signals)
+        signal_df['date'] = signal_df['date'].dt.strftime('%Y-%m-%d')
+        st.markdown("**Most recent signals**")
+        st.dataframe(signal_df[['date', 'signal', 'price', 'reason']].tail(5), use_container_width=True)
+        recent = signal_df.tail(3)
+        cols = st.columns(3)
+        for idx, row in recent.iterrows():
+            with cols[idx - recent.index[0]]:
+                st.metric(row['signal'], f"${row['price']:.2f}", row['reason'])
+    else:
+        st.write("No buy/sell signals detected for this data range.")
+
+st.markdown("---")
 with st.expander("📋 View Forecast Data"):
     forecast_df = pd.DataFrame({
         "Date": future_dates.strftime("%Y-%m-%d"),

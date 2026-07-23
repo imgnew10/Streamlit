@@ -78,6 +78,91 @@ def detect_candlestick_patterns(data):
             patterns['Bearish Engulfing'] = 'Strong Bearish'
     return patterns
 
+
+def calculate_support_resistance(data, window=5, levels=3):
+    highs = data['High']
+    lows = data['Low']
+    support_points = []
+    resistance_points = []
+    for i in range(window, len(data) - window):
+        window_high = highs.iloc[i - window:i + window + 1]
+        window_low = lows.iloc[i - window:i + window + 1]
+        if lows.iloc[i] == window_low.min():
+            support_points.append((data.index[i], lows.iloc[i]))
+        if highs.iloc[i] == window_high.max():
+            resistance_points.append((data.index[i], highs.iloc[i]))
+
+    support_prices = []
+    for _, price in sorted(support_points, key=lambda x: x[1]):
+        if all(abs(price - existing) / existing > 0.01 for existing in support_prices):
+            support_prices.append(price)
+            if len(support_prices) >= levels:
+                break
+
+    resistance_prices = []
+    for _, price in sorted(resistance_points, key=lambda x: x[1], reverse=True):
+        if all(abs(price - existing) / existing > 0.01 for existing in resistance_prices):
+            resistance_prices.append(price)
+            if len(resistance_prices) >= levels:
+                break
+
+    return support_prices, resistance_prices
+
+
+def detect_trade_signals(data, support_levels, resistance_levels):
+    close = data['Close']
+    sma20 = close.rolling(20).mean()
+    sma50 = close.rolling(50).mean()
+    delta = close.diff()
+    gain = delta.where(delta > 0, 0).rolling(14).mean()
+    loss = (-delta.where(delta < 0, 0)).rolling(14).mean()
+    rs = gain / loss
+    rsi = 100 - (100 / (1 + rs))
+    signals = []
+    last_buy = None
+    last_sell = None
+    support_val = support_levels[0] if support_levels else None
+    resistance_val = resistance_levels[0] if resistance_levels else None
+    cooldown = pd.Timedelta(days=10)
+
+    for i in range(1, len(data)):
+        date = data.index[i]
+        price = close.iloc[i]
+        reason = None
+        if not np.isnan(sma20.iloc[i]) and not np.isnan(sma50.iloc[i]):
+            if sma20.iloc[i - 1] <= sma50.iloc[i - 1] and sma20.iloc[i] > sma50.iloc[i]:
+                reason = 'SMA Golden Cross'
+                if last_buy is None or date - last_buy >= cooldown:
+                    signals.append({'date': date, 'signal': 'Buy', 'price': price, 'reason': reason})
+                    last_buy = date
+            elif sma20.iloc[i - 1] >= sma50.iloc[i - 1] and sma20.iloc[i] < sma50.iloc[i]:
+                reason = 'SMA Death Cross'
+                if last_sell is None or date - last_sell >= cooldown:
+                    signals.append({'date': date, 'signal': 'Sell', 'price': price, 'reason': reason})
+                    last_sell = date
+
+        if not np.isnan(rsi.iloc[i]):
+            if rsi.iloc[i] < 30 and support_val is not None and price <= support_val * 1.03:
+                reason = 'RSI Oversold near Support'
+                if last_buy is None or date - last_buy >= cooldown:
+                    signals.append({'date': date, 'signal': 'Buy', 'price': price, 'reason': reason})
+                    last_buy = date
+            elif rsi.iloc[i] > 70 and resistance_val is not None and price >= resistance_val * 0.97:
+                reason = 'RSI Overbought near Resistance'
+                if last_sell is None or date - last_sell >= cooldown:
+                    signals.append({'date': date, 'signal': 'Sell', 'price': price, 'reason': reason})
+                    last_sell = date
+
+    cleaned_signals = []
+    seen = set()
+    for sig in signals:
+        key = (sig['date'], sig['signal'], round(sig['price'], 2), sig['reason'])
+        if key not in seen:
+            cleaned_signals.append(sig)
+            seen.add(key)
+    return cleaned_signals[-30:]
+
+
 def calculate_all_signals(data, info, ticker, spy_close=None):
     if data is None or data.empty:
         return None
@@ -175,6 +260,16 @@ def calculate_all_signals(data, info, ticker, spy_close=None):
         else:
             smart_votes.append(0); results['smart_score']['52W Range'] = f'Mid Range ({position*100:.0f}%)'
 
+    support_levels, resistance_levels = calculate_support_resistance(data)
+    results['support_levels'] = support_levels
+    results['resistance_levels'] = resistance_levels
+    if support_levels and close.iloc[-1] <= support_levels[0] * 1.02:
+        smart_votes.append(0.5); results['smart_score']['Support/Resistance'] = 'Near Support (+0.5)'
+    elif resistance_levels and close.iloc[-1] >= resistance_levels[0] * 0.98:
+        smart_votes.append(-0.5); results['smart_score']['Support/Resistance'] = 'Near Resistance (-0.5)'
+    else:
+        smart_votes.append(0); results['smart_score']['Support/Resistance'] = 'Neutral (0)'
+
     analyst_score = 0
     analyst_count = 0
     analyst_target = None
@@ -226,6 +321,7 @@ def calculate_all_signals(data, info, ticker, spy_close=None):
         smart_votes.append(0); results['smart_score']['EPS Growth'] = 'No Data (0)'
 
     smart_score = np.mean(smart_votes)
+    trend_votes = []
 
     trend_votes = []
     plus_dm = high.diff().clip(lower=0)
@@ -304,6 +400,9 @@ def calculate_all_signals(data, info, ticker, spy_close=None):
     patterns = detect_candlestick_patterns(data)
     results['patterns'] = patterns
 
+    patterns = detect_candlestick_patterns(data)
+    results['patterns'] = patterns
+
     if 'Bullish Engulfing' in patterns or 'Hammer' in patterns:
         tech_score = 1.0; results['technical_rating']['Pattern'] = 'Bullish Pattern Detected (+1.0)'
     elif 'Bearish Engulfing' in patterns or 'Hanging Man' in patterns:
@@ -312,6 +411,8 @@ def calculate_all_signals(data, info, ticker, spy_close=None):
         tech_score = 0; results['technical_rating']['Pattern'] = 'Doji - Reversal Possible (0)'
     else:
         tech_score = 0; results['technical_rating']['Pattern'] = 'No Clear Pattern (0)'
+
+    results['trade_signals'] = detect_trade_signals(data, support_levels, resistance_levels)
 
     unified_score = smart_score * 0.40 + trend_score * 0.25 + alpha_score * 0.20 + tech_score * 0.15
 
@@ -333,7 +434,7 @@ def calculate_all_signals(data, info, ticker, spy_close=None):
     }
     return results
 
-def generate_forecast(data, score, days):
+def generate_forecast(data, score, days, support_levels=None, resistance_levels=None):
     close = data['Close']
     last_price = close.iloc[-1]
     returns = close.pct_change().dropna()
@@ -358,12 +459,25 @@ def generate_forecast(data, score, days):
     p10 = np.percentile(sim_array, 10, axis=0)
     p90 = np.percentile(sim_array, 90, axis=0)
 
+    sr_bias = 0
+    if support_levels:
+        previous_support = max([lvl for lvl in support_levels if lvl < last_price] or [None])
+        if previous_support is not None and last_price - previous_support < last_price * 0.05:
+            sr_bias += 0.0003
+    if resistance_levels:
+        next_resistance = min([lvl for lvl in resistance_levels if lvl > last_price] or [None])
+        if next_resistance is not None and next_resistance - last_price < last_price * 0.05:
+            sr_bias -= 0.0002
+
     if score > 0.3:
-        adjust = last_price * 0.003 * score
+        adjust = last_price * 0.002 * score
         mean_f = mean_f + np.linspace(0, adjust * days, days)
     elif score < -0.3:
-        adjust = last_price * 0.003 * abs(score)
+        adjust = last_price * 0.002 * abs(score)
         mean_f = mean_f - np.linspace(0, adjust * days, days)
+
+    if sr_bias != 0:
+        mean_f = mean_f + np.linspace(0, sr_bias * last_price * days, days)
 
     future_dates = pd.date_range(start=close.index[-1] + timedelta(days=1), periods=days, freq='B')
     return future_dates, mean_f, p10, p90
