@@ -102,7 +102,7 @@ period_return = ((close.iloc[-1] / close.iloc[0]) - 1) * 100
 yr_high = high.max()
 yr_low = low.min()
 
-future_dates, mean_f, p10, p90 = generate_forecast(
+future_dates, mean_f, p10, p90, future_support_levels, future_resistance_levels = generate_forecast(
     data,
     score,
     forecast_days,
@@ -127,6 +127,22 @@ with m6:
     st.metric("Alpha Signal", f"{unified['alpha_score']:+.2f}")
 with m7:
     st.metric("Tech Rating", f"{unified['tech_score']:+.2f}")
+
+forecast_support_price = future_support_levels[0][1] if future_support_levels else None
+forecast_resistance_price = future_resistance_levels[0][1] if future_resistance_levels else None
+forecast_mean_price = mean_f[-1] if len(mean_f) else None
+
+if forecast_support_price is not None and forecast_resistance_price is not None:
+    fs_pct = ((forecast_support_price - last_price) / last_price) * 100
+    fr_pct = ((forecast_resistance_price - last_price) / last_price) * 100
+    fm_pct = ((forecast_mean_price - last_price) / last_price) * 100 if forecast_mean_price is not None else None
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        st.metric("Forecast Support (10%)", f"${forecast_support_price:.2f}", f"{fs_pct:+.1f}%")
+    with c2:
+        st.metric("Forecast Mean", f"${forecast_mean_price:.2f}", f"{fm_pct:+.1f}%")
+    with c3:
+        st.metric("Forecast Resistance (90%)", f"${forecast_resistance_price:.2f}", f"{fr_pct:+.1f}%")
 
 # ==================== MAIN CHART ====================
 sma20 = close.rolling(20).mean()
@@ -180,7 +196,7 @@ for idx, entry in enumerate(support_levels):
         xref="x",
         yref="y",
         x0=close.index[0],
-        x1=close.index[-1],
+        x1=future_dates[-1],
         y0=level * 0.995,
         y1=level * 1.005,
         fillcolor="rgba(0,128,0,0.08)",
@@ -196,7 +212,7 @@ for idx, entry in enumerate(resistance_levels):
         xref="x",
         yref="y",
         x0=close.index[0],
-        x1=close.index[-1],
+        x1=future_dates[-1],
         y0=level * 0.995,
         y1=level * 1.005,
         fillcolor="rgba(255,0,0,0.08)",
@@ -204,6 +220,13 @@ for idx, entry in enumerate(resistance_levels):
         row=1,
         col=1
     )
+
+if future_support_levels:
+    fs_label, fs_value = future_support_levels[0]
+    fig.add_hline(y=fs_value, line=dict(color="green", width=1, dash="dash"), annotation_text=fs_label, annotation_position="bottom right", row=1, col=1)
+if future_resistance_levels:
+    fr_label, fr_value = future_resistance_levels[0]
+    fig.add_hline(y=fr_value, line=dict(color="red", width=1, dash="dash"), annotation_text=fr_label, annotation_position="top right", row=1, col=1)
 
 buy_signals = [s for s in results.get('trade_signals', []) if s['signal'] == 'Buy']
 sell_signals = [s for s in results.get('trade_signals', []) if s['signal'] == 'Sell']

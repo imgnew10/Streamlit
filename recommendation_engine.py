@@ -495,4 +495,7 @@ def generate_forecast(data, score, days, support_levels=None, resistance_levels=
         mean_f = mean_f + np.linspace(0, sr_bias * last_price * days, days)
 
     future_dates = pd.date_range(start=close.index[-1] + timedelta(days=1), periods=days, freq='B')
-    return future_dates, mean_f, p10, p90
+    forecast_support_levels = [("Forecast Support (10th pct)", float(p10[-1]))] if len(p10) else []
+    forecast_resistance_levels = [("Forecast Resistance (90th pct)", float(p90[-1]))] if len(p90) else []
+
+    return future_dates, mean_f, p10, p90, forecast_support_levels, forecast_resistance_levels
