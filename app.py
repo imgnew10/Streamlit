@@ -166,7 +166,7 @@ fig.add_trace(go.Scatter(x=vwap.index, y=vwap.values, name="VWAP", line=dict(col
 
 support_levels = results.get('support_levels', [])
 resistance_levels = results.get('resistance_levels', [])
-for idx, level in enumerate(support_levels):
+for idx, (dt, level) in enumerate(support_levels):
     fig.add_hline(y=level, line=dict(color="green", width=1, dash="dot"), annotation_text=f"Support {idx+1}: ${level:.2f}", annotation_position="bottom left", row=1, col=1)
     fig.add_shape(
         type="rect",
@@ -181,7 +181,7 @@ for idx, level in enumerate(support_levels):
         row=1,
         col=1
     )
-for idx, level in enumerate(resistance_levels):
+for idx, (dt, level) in enumerate(resistance_levels):
     fig.add_hline(y=level, line=dict(color="red", width=1, dash="dot"), annotation_text=f"Resistance {idx+1}: ${level:.2f}", annotation_position="top left", row=1, col=1)
     fig.add_shape(
         type="rect",
@@ -302,15 +302,15 @@ with st.expander("🧭 Support & Resistance Zones"):
     resistance_levels = results.get('resistance_levels', [])
     if support_levels:
         st.write("**Support Zones**")
-        for idx, level in enumerate(support_levels, start=1):
-            st.write(f"• Support {idx}: ${level:.2f}")
+        for idx, (dt, level) in enumerate(support_levels, start=1):
+            st.write(f"• Support {idx}: ${level:.2f} ({dt.strftime('%Y-%m-%d')})")
     else:
         st.write("No support zones detected.")
 
     if resistance_levels:
         st.write("**Resistance Zones**")
-        for idx, level in enumerate(resistance_levels, start=1):
-            st.write(f"• Resistance {idx}: ${level:.2f}")
+        for idx, (dt, level) in enumerate(resistance_levels, start=1):
+            st.write(f"• Resistance {idx}: ${level:.2f} ({dt.strftime('%Y-%m-%d')})")
     else:
         st.write("No resistance zones detected.")
 

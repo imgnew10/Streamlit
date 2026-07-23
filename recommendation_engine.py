@@ -79,11 +79,14 @@ def detect_candlestick_patterns(data):
     return patterns
 
 
-def calculate_support_resistance(data, window=5, levels=3):
+def calculate_support_resistance(data, window=10, levels=3):
     highs = data['High']
     lows = data['Low']
+    close = data['Close']
+    current_price = close.iloc[-1]
     support_points = []
     resistance_points = []
+
     for i in range(window, len(data) - window):
         window_high = highs.iloc[i - window:i + window + 1]
         window_low = lows.iloc[i - window:i + window + 1]
@@ -92,21 +95,29 @@ def calculate_support_resistance(data, window=5, levels=3):
         if highs.iloc[i] == window_high.max():
             resistance_points.append((data.index[i], highs.iloc[i]))
 
-    support_prices = []
-    for _, price in sorted(support_points, key=lambda x: x[1]):
-        if all(abs(price - existing) / existing > 0.01 for existing in support_prices):
-            support_prices.append(price)
-            if len(support_prices) >= levels:
-                break
+    def cluster_levels(points, tol=0.02):
+        clustered = []
+        for dt, price in sorted(points, key=lambda x: x[1]):
+            if all(abs(price - existing_price) / existing_price > tol for _, existing_price in clustered):
+                clustered.append((dt, price))
+        return clustered
 
-    resistance_prices = []
-    for _, price in sorted(resistance_points, key=lambda x: x[1], reverse=True):
-        if all(abs(price - existing) / existing > 0.01 for existing in resistance_prices):
-            resistance_prices.append(price)
-            if len(resistance_prices) >= levels:
-                break
+    support_levels = [(dt, price) for dt, price in cluster_levels(support_points) if price < current_price]
+    resistance_levels = [(dt, price) for dt, price in cluster_levels(resistance_points, tol=0.02)[::-1] if price > current_price]
 
-    return support_prices, resistance_prices
+    # Prefer recent and relevant levels near the current price.
+    def relevant_levels(levels_list, direction):
+        if not levels_list:
+            return []
+        nearby = [(dt, price) for dt, price in levels_list if abs(price - current_price) / current_price <= 0.35]
+        if len(nearby) >= levels:
+            return nearby[:levels]
+        return levels_list[:levels]
+
+    support_levels = relevant_levels(sorted(support_levels, key=lambda x: x[1], reverse=True), 'support')
+    resistance_levels = relevant_levels(sorted(resistance_levels, key=lambda x: x[1]), 'resistance')
+
+    return support_levels[:levels], resistance_levels[:levels]
 
 
 def detect_trade_signals(data, support_levels, resistance_levels):
@@ -121,8 +132,8 @@ def detect_trade_signals(data, support_levels, resistance_levels):
     signals = []
     last_buy = None
     last_sell = None
-    support_val = support_levels[0] if support_levels else None
-    resistance_val = resistance_levels[0] if resistance_levels else None
+    support_val = support_levels[0][1] if support_levels else None
+    resistance_val = resistance_levels[0][1] if resistance_levels else None
     cooldown = pd.Timedelta(days=10)
 
     for i in range(1, len(data)):
@@ -263,9 +274,11 @@ def calculate_all_signals(data, info, ticker, spy_close=None):
     support_levels, resistance_levels = calculate_support_resistance(data)
     results['support_levels'] = support_levels
     results['resistance_levels'] = resistance_levels
-    if support_levels and close.iloc[-1] <= support_levels[0] * 1.02:
+    support_value = support_levels[0][1] if support_levels else None
+    resistance_value = resistance_levels[0][1] if resistance_levels else None
+    if support_value and close.iloc[-1] <= support_value * 1.02:
         smart_votes.append(0.5); results['smart_score']['Support/Resistance'] = 'Near Support (+0.5)'
-    elif resistance_levels and close.iloc[-1] >= resistance_levels[0] * 0.98:
+    elif resistance_value and close.iloc[-1] >= resistance_value * 0.98:
         smart_votes.append(-0.5); results['smart_score']['Support/Resistance'] = 'Near Resistance (-0.5)'
     else:
         smart_votes.append(0); results['smart_score']['Support/Resistance'] = 'Neutral (0)'
@@ -460,12 +473,14 @@ def generate_forecast(data, score, days, support_levels=None, resistance_levels=
     p90 = np.percentile(sim_array, 90, axis=0)
 
     sr_bias = 0
-    if support_levels:
-        previous_support = max([lvl for lvl in support_levels if lvl < last_price] or [None])
+    support_prices = [lvl for _, lvl in support_levels] if support_levels else []
+    resistance_prices = [lvl for _, lvl in resistance_levels] if resistance_levels else []
+    if support_prices:
+        previous_support = max([lvl for lvl in support_prices if lvl < last_price] or [None])
         if previous_support is not None and last_price - previous_support < last_price * 0.05:
             sr_bias += 0.0003
-    if resistance_levels:
-        next_resistance = min([lvl for lvl in resistance_levels if lvl > last_price] or [None])
+    if resistance_prices:
+        next_resistance = min([lvl for lvl in resistance_prices if lvl > last_price] or [None])
         if next_resistance is not None and next_resistance - last_price < last_price * 0.05:
             sr_bias -= 0.0002
 
