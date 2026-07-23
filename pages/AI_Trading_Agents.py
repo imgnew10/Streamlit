@@ -348,33 +348,34 @@ agents_config = [
 
 # Run all agents
 agent_results = {}
-agent_cols = st.columns(len(agents_config))
 
-for idx, agent in enumerate(agents_config):
-    with agent_cols[idx]:
-        st.markdown(f"<h4 style='color:{agent['color']};margin:0;'>{agent['icon']} {agent['name']}</h4>", unsafe_allow_html=True)
+for agent in agents_config:
+    st.markdown(f"<h4 style='color:{agent['color']};margin:0 0 10px 0;'>{agent['icon']} {agent['name']}</h4>", unsafe_allow_html=True)
 
-        with st.spinner("Thinking..."):
-            content, error = call_llm(
-                agent['system'],
-                agent['prompt'],
-                provider_choice,
-                api_key,
-                model_choice,
-                ollama_url
-            )
+    with st.spinner("Thinking..."):
+        content, error = call_llm(
+            agent['system'],
+            agent['prompt'],
+            provider_choice,
+            api_key,
+            model_choice,
+            ollama_url
+        )
 
-        if error:
-            st.error(f"Error: {error}")
-            agent_results[agent['name']] = {"signal": "ERROR", "score": 0, "emoji": "⚪", "reasoning": error}
-        else:
-            parsed = parse_agent_response(content)
-            agent_results[agent['name']] = parsed
+    if error:
+        st.error(f"Error: {error}")
+        agent_results[agent['name']] = {"signal": "ERROR", "score": 0, "emoji": "⚪", "reasoning": error}
+    else:
+        parsed = parse_agent_response(content)
+        agent_results[agent['name']] = parsed
 
-            st.markdown(f"<div style='background-color:{agent['color']}15;border-radius:8px;padding:10px;margin:5px 0;border-left:3px solid {agent['color']};'>"
-                       f"<p style='margin:0;font-size:1.2rem;font-weight:bold;color:{agent['color']};'>{parsed['emoji']} {parsed['signal']}</p>"
-                       f"<p style='margin:5px 0 0 0;font-size:0.85rem;color:#444;line-height:1.4;'>{parsed['reasoning'][:200]}...</p>"
-                       f"</div>", unsafe_allow_html=True)
+        st.markdown(
+            f"<div style='background-color:{agent['color']}15;border-radius:8px;padding:15px;margin:0 0 20px 0;border-left:4px solid {agent['color']};'>"
+            f"<p style='margin:0;font-size:1.2rem;font-weight:bold;color:{agent['color']};'>{parsed['emoji']} {parsed['signal']}</p>"
+            f"<p style='margin:10px 0 0 0;font-size:0.95rem;color:#444;line-height:1.6;white-space:pre-wrap;'>{parsed['reasoning']}</p>"
+            f"</div>",
+            unsafe_allow_html=True
+        )
 
 # PORTFOLIO MANAGER - FINAL DECISION
 st.markdown("---")
